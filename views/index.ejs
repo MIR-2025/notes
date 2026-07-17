@@ -37,6 +37,10 @@
           <button id="download-note" class="btn btn-outline-secondary" type="button">
             Download
           </button>
+          <button id="pdf-note" class="btn btn-outline-secondary" type="button"
+            title="Save this note as a PDF (via the browser's print dialog)">
+            PDF
+          </button>
           <button id="pin-note" class="btn btn-outline-secondary" type="button">Pin</button>
           <button id="delete-note" class="btn btn-outline-danger" type="button">Delete</button>
         </div>
@@ -54,11 +58,16 @@
       <p class="text-secondary small mb-0">
         <kbd>Ctrl</kbd> + <kbd>N</kbd> new &middot;
         <kbd>Ctrl</kbd> + <kbd>K</kbd> search &middot;
-        <kbd>Ctrl</kbd> + <kbd>E</kbd> preview
+        <kbd>Ctrl</kbd> + <kbd>E</kbd> preview &middot;
+        <kbd>Ctrl</kbd> + <kbd>P</kbd> PDF
       </p>
     </div>
   </main>
 </div>
+
+<!-- Populated from the open note just before printing; hidden on screen and the
+     only thing visible on paper. See the @media print rules. -->
+<article id="print-area" aria-hidden="true"></article>
 
 <script type="module" src="/js/app.js"></script>
 </body>

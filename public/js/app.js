@@ -31,7 +31,9 @@ const els = {
   pin: document.getElementById('pin-note'),
   del: document.getElementById('delete-note'),
   download: document.getElementById('download-note'),
-  exportAll: document.getElementById('export-all')
+  pdf: document.getElementById('pdf-note'),
+  exportAll: document.getElementById('export-all'),
+  printArea: document.getElementById('print-area')
 };
 
 const SAVE_DELAY = 600;
@@ -252,6 +254,51 @@ function exportAll() {
   triggerDownload(`/api/export${query ? `?q=${encodeURIComponent(query)}` : ''}`);
 }
 
+// Render the open note into the hidden print area. Runs on `beforeprint`, so it
+// covers every route to the print dialog -- the PDF button, Ctrl+P, and the
+// browser's own menu -- not just our button.
+let titleBeforePrint = null;
+function fillPrintArea() {
+  if (currentId === null) {
+    els.printArea.replaceChildren();
+    return;
+  }
+  els.printArea.innerHTML = renderMarkdown(els.body.value);
+  // The browser seeds the "Save as PDF" filename from document.title. Prefer the
+  // saved title, else the current first line (mirrors how the server derives it).
+  const note = notes.find((n) => n.id === currentId);
+  const firstLine = els.body.value
+    .split('\n')
+    .map((line) => line.trim())
+    .find(Boolean);
+  const name = (note?.title || firstLine?.replace(/^#{1,6}\s*/, '') || 'note').slice(0, 120);
+  titleBeforePrint = document.title;
+  document.title = name;
+}
+
+function restoreTitle() {
+  if (titleBeforePrint !== null) {
+    document.title = titleBeforePrint;
+    titleBeforePrint = null;
+  }
+}
+
+async function printCurrent() {
+  if (currentId === null) return;
+  // Save first so the PDF reflects the latest keystrokes, not the last autosave.
+  await flush();
+  // Populate synchronously here -- `beforeprint` does NOT fire reliably from a
+  // programmatic window.print() (and not at all in some browsers), so relying on
+  // it alone left the print area empty and the page blank.
+  fillPrintArea();
+  window.print();
+}
+
+// Belt and suspenders for the one path that skips printCurrent(): the browser's
+// own File > Print menu. Where beforeprint does fire, this fills the area too.
+window.addEventListener('beforeprint', fillPrintArea);
+window.addEventListener('afterprint', restoreTitle);
+
 async function removeNote() {
   if (currentId === null) return;
   const note = notes.find((n) => n.id === currentId);
@@ -337,6 +384,7 @@ els.pin.addEventListener('click', togglePin);
 els.del.addEventListener('click', removeNote);
 els.togglePreview.addEventListener('click', () => setPreview(!previewing));
 els.download.addEventListener('click', downloadCurrent);
+els.pdf.addEventListener('click', printCurrent);
 els.exportAll.addEventListener('click', exportAll);
 
 document.addEventListener('keydown', (event) => {
@@ -355,6 +403,11 @@ document.addEventListener('keydown', (event) => {
   } else if (event.key === 'e') {
     event.preventDefault();
     if (currentId !== null) setPreview(!previewing);
+  } else if (event.key === 'p' && currentId !== null) {
+    // Route the native print shortcut through our flow so it saves first and
+    // prints just the note, not the whole app chrome.
+    event.preventDefault();
+    printCurrent();
   }
 });
 

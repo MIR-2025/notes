@@ -282,3 +282,147 @@ body {
     padding: 1rem;
   }
 }
+
+/* Print / Save-as-PDF ----------------------------------------------------- */
+
+/* Hidden on screen; the app chrome is hidden only when printing. */
+#print-area {
+  display: none;
+}
+
+@media print {
+  /* Print in light regardless of the on-screen dark theme -- ink on paper.
+     Without forcing the page white, the dark-theme body background prints
+     under the note wherever the content is shorter than the page. */
+  :root {
+    color-scheme: light;
+  }
+
+  html,
+  body {
+    background: #fff !important;
+  }
+
+  .app {
+    display: none !important;
+  }
+
+  #print-area {
+    display: block;
+    background: #fff;
+    font-family:
+      -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial,
+      sans-serif;
+    font-size: 11pt;
+    line-height: 1.5;
+  }
+
+  /* Force ink-black text on every descendant. Inheriting from the dark theme
+     left light-grey text on white paper -- effectively invisible. */
+  #print-area,
+  #print-area * {
+    color: #000 !important;
+  }
+
+  #print-area > :first-child {
+    margin-top: 0;
+  }
+
+  #print-area h1,
+  #print-area h2,
+  #print-area h3,
+  #print-area h4 {
+    font-weight: 600;
+    line-height: 1.25;
+    margin: 1.2em 0 0.5em;
+    /* Keep a heading with the text that follows it across page breaks. */
+    break-after: avoid;
+  }
+
+  #print-area h1 {
+    font-size: 20pt;
+  }
+  #print-area h2 {
+    font-size: 16pt;
+  }
+  #print-area h3 {
+    font-size: 13pt;
+  }
+
+  #print-area p,
+  #print-area ul,
+  #print-area ol,
+  #print-area blockquote,
+  #print-area pre,
+  #print-area table {
+    margin: 0 0 0.7em;
+  }
+
+  #print-area ul,
+  #print-area ol {
+    padding-left: 1.4em;
+  }
+
+  #print-area blockquote {
+    margin-left: 0;
+    padding-left: 1em;
+    border-left: 3px solid #999;
+    color: #333;
+  }
+
+  #print-area code {
+    font-family: ui-monospace, 'SFMono-Regular', Menlo, Consolas, monospace;
+    font-size: 9.5pt;
+    background: #f2f2f2;
+    padding: 0.1em 0.3em;
+    border-radius: 3px;
+  }
+
+  #print-area pre {
+    background: #f2f2f2;
+    padding: 0.7em 0.9em;
+    border-radius: 4px;
+    /* Long code lines must wrap on paper -- there is no horizontal scroll. */
+    white-space: pre-wrap;
+    word-wrap: break-word;
+    break-inside: avoid;
+  }
+
+  #print-area pre code {
+    background: none;
+    padding: 0;
+  }
+
+  #print-area table {
+    border-collapse: collapse;
+    width: 100%;
+  }
+
+  #print-area th,
+  #print-area td {
+    border: 1px solid #999;
+    padding: 0.3em 0.6em;
+    text-align: left;
+  }
+
+  #print-area img {
+    max-width: 100%;
+  }
+
+  #print-area a {
+    color: #000;
+    text-decoration: underline;
+  }
+
+  /* Spell out link targets so a printed page keeps its references. */
+  #print-area a[href^='http']::after {
+    content: ' (' attr(href) ')';
+    font-size: 8.5pt;
+    color: #555;
+    word-break: break-all;
+  }
+
+  @page {
+    margin: 18mm;
+  }
+}
