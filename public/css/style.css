@@ -1,0 +1,284 @@
+:root {
+  --sidebar-width: 300px;
+}
+
+html,
+body {
+  height: 100%;
+}
+
+body {
+  overflow: hidden;
+}
+
+.app {
+  display: flex;
+  height: 100vh;
+}
+
+/* Sidebar ----------------------------------------------------------------- */
+
+.sidebar {
+  width: var(--sidebar-width);
+  flex: 0 0 var(--sidebar-width);
+  display: flex;
+  flex-direction: column;
+  border-right: 1px solid var(--bs-border-color);
+  background: var(--bs-tertiary-bg);
+}
+
+.sidebar-head {
+  padding: 0.75rem;
+  border-bottom: 1px solid var(--bs-border-color);
+}
+
+.note-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  overflow-y: auto;
+  flex: 1;
+}
+
+.note-list li {
+  padding: 0.6rem 0.75rem;
+  border-bottom: 1px solid var(--bs-border-color);
+  cursor: pointer;
+}
+
+.note-list li:hover {
+  background: var(--bs-secondary-bg);
+}
+
+.note-list li.active {
+  background: var(--bs-primary-bg-subtle);
+}
+
+/* A note that just arrived over the live feed, from another tab or a Claude. */
+.note-list li.arrived {
+  animation: note-arrived 1.4s ease-out;
+}
+
+@keyframes note-arrived {
+  from { background: var(--bs-success-bg-subtle); }
+  to { background: transparent; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .note-list li.arrived {
+    animation: none;
+  }
+}
+
+.note-title {
+  display: block;
+  font-weight: 500;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.note-meta {
+  display: block;
+  font-size: 0.75rem;
+  color: var(--bs-secondary-color);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.empty-list {
+  padding: 1rem 0.75rem;
+  margin: 0;
+  color: var(--bs-secondary-color);
+  font-size: 0.875rem;
+}
+
+/* Editor ------------------------------------------------------------------ */
+
+.editor {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.editor-pane {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+
+.editor-pane.d-none {
+  display: none !important;
+}
+
+.editor-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+  padding: 0.5rem 0.75rem;
+  border-bottom: 1px solid var(--bs-border-color);
+}
+
+.status {
+  font-size: 0.8125rem;
+  color: var(--bs-secondary-color);
+}
+
+.note-body {
+  flex: 1;
+  width: 100%;
+  resize: none;
+  border: 0;
+  outline: 0;
+  padding: 1.25rem 1.5rem;
+  background: transparent;
+  color: var(--bs-body-color);
+  font-size: 1rem;
+  line-height: 1.6;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+}
+
+/* Markdown preview ------------------------------------------------------- */
+
+.note-preview {
+  flex: 1;
+  overflow-y: auto;
+  padding: 1.25rem 1.5rem;
+  line-height: 1.65;
+}
+
+.note-preview > :first-child {
+  margin-top: 0;
+}
+
+.note-preview > :last-child {
+  margin-bottom: 0;
+}
+
+.note-preview h1,
+.note-preview h2,
+.note-preview h3,
+.note-preview h4 {
+  margin: 1.4rem 0 0.6rem;
+  font-weight: 600;
+  line-height: 1.3;
+}
+
+.note-preview h1 { font-size: 1.6rem; }
+.note-preview h2 { font-size: 1.35rem; }
+.note-preview h3 { font-size: 1.15rem; }
+.note-preview h4 { font-size: 1rem; }
+
+.note-preview h1,
+.note-preview h2 {
+  padding-bottom: 0.3rem;
+  border-bottom: 1px solid var(--bs-border-color);
+}
+
+.note-preview p,
+.note-preview ul,
+.note-preview ol,
+.note-preview blockquote,
+.note-preview pre,
+.note-preview table {
+  margin-bottom: 1rem;
+}
+
+.note-preview ul,
+.note-preview ol {
+  padding-left: 1.5rem;
+}
+
+.note-preview li {
+  margin-bottom: 0.25rem;
+}
+
+/* GFM task lists: drop the bullet, keep the box aligned with the text. */
+.note-preview li:has(> input[type='checkbox']) {
+  list-style: none;
+  margin-left: -1.25rem;
+}
+
+.note-preview li > input[type='checkbox'] {
+  margin-right: 0.4rem;
+}
+
+.note-preview blockquote {
+  padding: 0.15rem 0 0.15rem 1rem;
+  border-left: 3px solid var(--bs-border-color);
+  color: var(--bs-secondary-color);
+}
+
+.note-preview code {
+  padding: 0.15em 0.35em;
+  border-radius: 4px;
+  background: var(--bs-secondary-bg);
+  font-size: 0.875em;
+  color: var(--bs-body-color);
+}
+
+.note-preview pre {
+  padding: 0.85rem 1rem;
+  border-radius: 6px;
+  background: var(--bs-secondary-bg);
+  overflow-x: auto;
+}
+
+.note-preview pre code {
+  padding: 0;
+  background: none;
+}
+
+.note-preview table {
+  width: auto;
+  border-collapse: collapse;
+  display: block;
+  overflow-x: auto;
+}
+
+.note-preview th,
+.note-preview td {
+  padding: 0.4rem 0.75rem;
+  border: 1px solid var(--bs-border-color);
+}
+
+.note-preview th {
+  background: var(--bs-secondary-bg);
+  font-weight: 600;
+}
+
+.note-preview hr {
+  margin: 1.5rem 0;
+  border-color: var(--bs-border-color);
+}
+
+.note-preview img {
+  max-width: 100%;
+}
+
+.editor-empty {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  text-align: center;
+}
+
+.editor-empty.d-none {
+  display: none !important;
+}
+
+@media (max-width: 640px) {
+  :root {
+    --sidebar-width: 40vw;
+  }
+
+  .note-body {
+    padding: 1rem;
+  }
+}
