@@ -26,23 +26,36 @@ db.exec(`
   CREATE INDEX IF NOT EXISTS idx_notes_order ON notes(pinned DESC, updated_at DESC);
 `);
 
+// Migration: `author` records which agent last wrote the note (NULL for notes
+// written by hand in the browser, and for everything predating this column).
+// Additive and idempotent, so it is safe to run on every boot.
+const columns = db.prepare(`PRAGMA table_info(notes)`).all().map((c) => c.name);
+if (!columns.includes('author')) {
+  db.exec(`ALTER TABLE notes ADD COLUMN author TEXT`);
+}
+
 const statements = {
   list: db.prepare(`
-    SELECT id, title, body, pinned, created_at, updated_at
+    SELECT id, title, body, pinned, author, created_at, updated_at
       FROM notes
      ORDER BY pinned DESC, updated_at DESC
   `),
   search: db.prepare(`
-    SELECT id, title, body, pinned, created_at, updated_at
+    SELECT id, title, body, pinned, author, created_at, updated_at
       FROM notes
      WHERE title LIKE :q ESCAPE '\\' OR body LIKE :q ESCAPE '\\'
      ORDER BY pinned DESC, updated_at DESC
   `),
   get: db.prepare(`SELECT * FROM notes WHERE id = ?`),
-  insert: db.prepare(`INSERT INTO notes (title, body) VALUES (?, ?)`),
+  insert: db.prepare(`INSERT INTO notes (title, body, author) VALUES (?, ?, ?)`),
   update: db.prepare(`
     UPDATE notes
-       SET title = ?, body = ?, updated_at = datetime('now')
+       SET title = ?,
+           body = ?,
+           -- Keep the existing author when the writer is anonymous (a human in
+           -- the browser), so a stray typo does not erase an agent's byline.
+           author = COALESCE(?, author),
+           updated_at = datetime('now')
      WHERE id = ?
   `),
   setPinned: db.prepare(`
@@ -92,13 +105,13 @@ export function getNote(id) {
   return statements.get.get(id);
 }
 
-export function createNote(body = '') {
-  const { lastInsertRowid } = statements.insert.run(deriveTitle(body), body);
+export function createNote(body = '', author = null) {
+  const { lastInsertRowid } = statements.insert.run(deriveTitle(body), body, author);
   return getNote(lastInsertRowid);
 }
 
-export function updateNote(id, body) {
-  statements.update.run(deriveTitle(body), body, id);
+export function updateNote(id, body, author = null) {
+  statements.update.run(deriveTitle(body), body, author, id);
   return getNote(id);
 }
 

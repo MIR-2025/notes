@@ -33,11 +33,13 @@ const els = {
   download: document.getElementById('download-note'),
   pdf: document.getElementById('pdf-note'),
   exportAll: document.getElementById('export-all'),
+  themeToggle: document.getElementById('theme-toggle'),
   printArea: document.getElementById('print-area')
 };
 
 const SAVE_DELAY = 600;
 const PREVIEW_KEY = 'notes:preview';
+const THEME_KEY = 'notes:theme';
 
 // Identifies this tab so the live feed can skip the echo of our own edits.
 const CLIENT_ID = crypto.randomUUID();
@@ -332,16 +334,19 @@ async function handleEvent(event) {
   }
 
   if (event.type === 'updated' && event.note.id === currentId) {
+    // Name the agent that made THIS change; "elsewhere" when it was anonymous
+    // (a human in another tab).
+    const who = event.by ? `by ${event.by}` : 'elsewhere';
     if (dirty) {
       // Never clobber what is being typed -- the unsaved text wins, and the
       // next autosave will overwrite the other change.
-      setStatus('Changed elsewhere -- your unsaved edits are kept');
+      setStatus(`Changed ${who} -- your unsaved edits are kept`);
     } else if (event.note.body !== els.body.value) {
       const caret = els.body.selectionStart;
       els.body.value = event.note.body;
       els.body.setSelectionRange(caret, caret);
       if (previewing) paintPreview();
-      setStatus(`Updated elsewhere ${formatDate(event.note.updated_at)}`);
+      setStatus(`Updated ${who} ${formatDate(event.note.updated_at)}`);
     }
   }
 
@@ -386,6 +391,21 @@ els.togglePreview.addEventListener('click', () => setPreview(!previewing));
 els.download.addEventListener('click', downloadCurrent);
 els.pdf.addEventListener('click', printCurrent);
 els.exportAll.addEventListener('click', exportAll);
+
+// The initial theme is set by an inline script in <head> (before paint, to
+// avoid a flash). Here we only handle the toggle and persist the choice.
+els.themeToggle.addEventListener('click', () => {
+  const next =
+    document.documentElement.getAttribute('data-bs-theme') === 'dark'
+      ? 'light'
+      : 'dark';
+  document.documentElement.setAttribute('data-bs-theme', next);
+  try {
+    localStorage.setItem(THEME_KEY, next);
+  } catch {
+    /* no storage -- theme still applies for this session */
+  }
+});
 
 document.addEventListener('keydown', (event) => {
   if (!(event.ctrlKey || event.metaKey)) return;

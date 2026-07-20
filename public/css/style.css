@@ -32,6 +32,26 @@ body {
   border-bottom: 1px solid var(--bs-border-color);
 }
 
+/* Theme toggle: show the icon of the theme you'd switch TO. */
+.theme-toggle {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: 0 0 auto;
+}
+
+.theme-icon {
+  display: block;
+}
+
+[data-bs-theme='dark'] .theme-toggle .icon-moon {
+  display: none;
+}
+
+[data-bs-theme='light'] .theme-toggle .icon-sun {
+  display: none;
+}
+
 .note-list {
   list-style: none;
   margin: 0;

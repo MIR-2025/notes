@@ -28,6 +28,15 @@ function origin(req) {
   return req.get('X-Client-Id') || null;
 }
 
+// Who is writing: an agent identifies itself with `X-Agent: <name>`. Null means
+// a human in the browser. Rendered with textContent client-side, but sanitize
+// and cap it anyway so a stray header cannot wreck the status line or the DB.
+function agentName(req) {
+  const raw = req.get('X-Agent');
+  if (!raw) return null;
+  return raw.replace(/[\x00-\x1f\x7f]/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 60) || null;
+}
+
 function parseId(req, res) {
   const id = Number(req.params.id);
   if (!Number.isInteger(id) || id < 1) {
@@ -89,8 +98,9 @@ router.get('/api/export', (req, res) => {
 });
 
 router.post('/api/notes', (req, res) => {
-  const note = createNote(req.body?.body ?? '');
-  publish('created', { note }, origin(req));
+  const by = agentName(req);
+  const note = createNote(req.body?.body ?? '', by);
+  publish('created', { note, by }, origin(req));
   res.status(201).json(note);
 });
 
@@ -123,8 +133,9 @@ router.put('/api/notes/:id', (req, res) => {
   }
   if (!getNote(id)) return res.status(404).json({ error: 'Note not found' });
 
-  const note = updateNote(id, req.body.body);
-  publish('updated', { note }, origin(req));
+  const by = agentName(req);
+  const note = updateNote(id, req.body.body, by);
+  publish('updated', { note, by }, origin(req));
   res.json(note);
 });
 
@@ -133,8 +144,9 @@ router.patch('/api/notes/:id/pin', (req, res) => {
   if (id === null) return;
   if (!getNote(id)) return res.status(404).json({ error: 'Note not found' });
 
+  // Pinning is not a content edit, so it deliberately leaves `author` alone.
   const note = setPinned(id, Boolean(req.body?.pinned));
-  publish('updated', { note }, origin(req));
+  publish('updated', { note, by: agentName(req) }, origin(req));
   res.json(note);
 });
 
