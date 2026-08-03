@@ -431,10 +431,18 @@ document.addEventListener('keydown', (event) => {
   }
 });
 
-// Best-effort save when the tab is hidden or closed mid-edit. fetch() with
-// keepalive survives teardown; a normal one gets cancelled.
+// Two jobs on a visibility change:
+//  1. Coming BACK to a tab that may have slept or been backgrounded: the SSE
+//     stream can die silently (no 'error' event, so no reconnect and no resync),
+//     which means any note posted while we were away was missed. Re-sync the
+//     list. This is the fix for "an agent posted but it only showed after refresh."
+//  2. Going hidden mid-edit: best-effort save. fetch() keepalive survives teardown.
 document.addEventListener('visibilitychange', () => {
-  if (document.visibilityState !== 'hidden' || !dirty || currentId === null) return;
+  if (document.visibilityState === 'visible') {
+    refreshList();
+    return;
+  }
+  if (!dirty || currentId === null) return;
   clearTimeout(saveTimer);
   dirty = false;
   fetch(`/api/notes/${currentId}`, {
