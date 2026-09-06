@@ -1,6 +1,7 @@
 import { Router } from 'express';
 import {
   listNotes,
+  listSummaries,
   getNote,
   createNote,
   updateNote,
@@ -50,8 +51,14 @@ router.get('/', (_req, res) => {
   res.render('index', { title: 'Notes' });
 });
 
+// The list deliberately omits every note's body -- with a few hundred notes
+// that was megabytes of JSON per request, and the browser refetches this list
+// on every save, keystroke and live event. Each row carries a short `excerpt`
+// instead; a body is fetched by GET /api/notes/:id when a note is opened.
+// `?full=1` restores the old shape for any caller that really wants bodies.
 router.get('/api/notes', (req, res) => {
-  res.json(listNotes(req.query.q));
+  const full = req.query.full === '1' || req.query.full === 'true';
+  res.json(full ? listNotes(req.query.q) : listSummaries(req.query.q));
 });
 
 // Live feed of note changes. One way, server -> browser, so plain SSE rather

@@ -77,8 +77,35 @@ function formatDate(value) {
 }
 
 function preview(note) {
-  const rest = note.body.split('\n').slice(1).join(' ').trim();
-  return rest || 'No additional text';
+  return note.excerpt || 'No additional text';
+}
+
+// A list row is a summary: every column except `body`, plus a short `excerpt`.
+// A note handed back by a write is the full thing, so reduce it to that shape
+// before it goes back into the list.
+function toSummary(note) {
+  const { body, ...rest } = note;
+  return {
+    ...rest,
+    excerpt: body.split('\n').slice(1).join(' ').replace(/\s+/g, ' ').trim().slice(0, 300)
+  };
+}
+
+// The same order the server lists in: pinned first, then newest edit first.
+function sortNotes() {
+  notes.sort((a, b) => b.pinned - a.pinned || b.updated_at.localeCompare(a.updated_at));
+}
+
+// Fold one changed note into the list in place, instead of refetching all of
+// them. Saving is the hottest request in the app -- it fires on every pause in
+// typing -- and it already has the updated note in hand.
+function patchLocal(note) {
+  const summary = toSummary(note);
+  const at = notes.findIndex((n) => n.id === note.id);
+  if (at === -1) notes.push(summary);
+  else notes[at] = summary;
+  sortNotes();
+  renderList();
 }
 
 function renderList() {
@@ -160,7 +187,9 @@ async function open(id) {
   if (id === currentId) return;
   await flush();
 
-  const note = notes.find((n) => n.id === id) ?? (await api(`/api/notes/${id}`));
+  // The list carries no bodies, so opening a note always fetches it. That is
+  // one small request instead of preloading every body up front.
+  const note = await api(`/api/notes/${id}`);
   currentId = note.id;
   els.body.value = note.body;
   els.pin.textContent = note.pinned ? 'Unpin' : 'Pin';
@@ -186,7 +215,7 @@ async function save() {
       body: JSON.stringify({ body })
     });
     setStatus(`Saved ${formatDate(saved.updated_at)}`);
-    await refreshList();
+    patchLocal(saved);
   } catch (err) {
     dirty = true;
     setStatus('Save failed -- retrying on next edit');
@@ -229,7 +258,7 @@ async function togglePin() {
     body: JSON.stringify({ pinned: !note?.pinned })
   });
   els.pin.textContent = updated.pinned ? 'Unpin' : 'Pin';
-  await refreshList();
+  patchLocal(updated);
 }
 
 // A hidden <a download> click is the reliable cross-browser way to trigger a

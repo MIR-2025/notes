@@ -49,7 +49,7 @@ its location with the `DB_PATH` environment variable, or the port with `PORT`.
 
 | Method | Route | Purpose |
 | --- | --- | --- |
-| `GET` | `/api/notes?q=` | List / search notes |
+| `GET` | `/api/notes?q=` | List / search notes (summaries -- no bodies; `&full=1` for bodies) |
 | `POST` | `/api/notes` | Create a note (`{ body }`) |
 | `GET` | `/api/notes/:id` | Fetch one note |
 | `PUT` | `/api/notes/:id` | Update a note (`{ body }`) |

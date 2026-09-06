@@ -34,13 +34,83 @@ if (!columns.includes('author')) {
   db.exec(`ALTER TABLE notes ADD COLUMN author TEXT`);
 }
 
+// Full-text index. `content='notes'` makes it an external-content table: FTS
+// stores only the inverted index and reads columns back from `notes`, so the
+// note text is not duplicated on disk. The triggers keep the two in step --
+// an external-content table does NOT update itself.
+db.exec(`
+  CREATE VIRTUAL TABLE IF NOT EXISTS notes_fts USING fts5(
+    title,
+    body,
+    content='notes',
+    content_rowid='id',
+    tokenize='unicode61'
+  );
+
+  CREATE TRIGGER IF NOT EXISTS notes_fts_ai AFTER INSERT ON notes BEGIN
+    INSERT INTO notes_fts(rowid, title, body) VALUES (new.id, new.title, new.body);
+  END;
+
+  CREATE TRIGGER IF NOT EXISTS notes_fts_ad AFTER DELETE ON notes BEGIN
+    INSERT INTO notes_fts(notes_fts, rowid, title, body)
+      VALUES ('delete', old.id, old.title, old.body);
+  END;
+
+  CREATE TRIGGER IF NOT EXISTS notes_fts_au AFTER UPDATE ON notes BEGIN
+    INSERT INTO notes_fts(notes_fts, rowid, title, body)
+      VALUES ('delete', old.id, old.title, old.body);
+    INSERT INTO notes_fts(rowid, title, body) VALUES (new.id, new.title, new.body);
+  END;
+`);
+
+// One-time backfill of the index for notes that predate it. Gated on
+// user_version rather than on a row count: an external-content FTS table
+// answers COUNT(*) from `notes`, so it always looks populated.
+const SCHEMA_VERSION = 1;
+if (db.prepare(`PRAGMA user_version`).get().user_version < SCHEMA_VERSION) {
+  db.exec(`INSERT INTO notes_fts(notes_fts) VALUES('rebuild')`);
+  db.exec(`PRAGMA user_version = ${SCHEMA_VERSION}`);
+}
+
+// How much of the body travels with a list row. Enough to fill the two-line
+// preview under each title; the client never renders more than this.
+const EXCERPT_CHARS = 300;
+
+// The list columns, minus `body`. Shipping every body turned a list request
+// into megabytes of JSON -- see listSummaries.
+const SUMMARY_COLUMNS = `
+  n.id, n.title, n.pinned, n.author, n.created_at, n.updated_at,
+  CASE
+    WHEN instr(n.body, char(10)) = 0 THEN ''
+    ELSE substr(n.body, instr(n.body, char(10)) + 1, ${EXCERPT_CHARS})
+  END AS excerpt
+`;
+
 const statements = {
-  list: db.prepare(`
+  listSummaries: db.prepare(`
+    SELECT ${SUMMARY_COLUMNS}
+      FROM notes n
+     ORDER BY n.pinned DESC, n.updated_at DESC
+  `),
+  searchSummaries: db.prepare(`
+    SELECT ${SUMMARY_COLUMNS}
+      FROM notes_fts
+      JOIN notes n ON n.id = notes_fts.rowid
+     WHERE notes_fts MATCH ?
+     ORDER BY n.pinned DESC, n.updated_at DESC
+  `),
+  searchSummariesLike: db.prepare(`
+    SELECT ${SUMMARY_COLUMNS}
+      FROM notes n
+     WHERE n.title LIKE :q ESCAPE '\\' OR n.body LIKE :q ESCAPE '\\'
+     ORDER BY n.pinned DESC, n.updated_at DESC
+  `),
+  listFull: db.prepare(`
     SELECT id, title, body, pinned, author, created_at, updated_at
       FROM notes
      ORDER BY pinned DESC, updated_at DESC
   `),
-  search: db.prepare(`
+  searchFull: db.prepare(`
     SELECT id, title, body, pinned, author, created_at, updated_at
       FROM notes
      WHERE title LIKE :q ESCAPE '\\' OR body LIKE :q ESCAPE '\\'
@@ -80,6 +150,17 @@ function escapeLike(term) {
   return term.replace(/[\\%_]/g, (char) => `\\${char}`);
 }
 
+// Turn what someone typed in the search box into an FTS5 MATCH expression.
+// Every word becomes a quoted prefix term, so "mir dev" finds "MIR dev log"
+// and a half-typed word still matches. Quoting is what keeps FTS operators
+// (AND, OR, NOT, *, ^, ":") in a note's text from being read as syntax --
+// unquoted, a search for `NOT` is a parse error, not a search.
+function ftsQuery(term) {
+  const words = term.match(/[\p{L}\p{N}_]+/gu);
+  if (!words) return null;
+  return words.map((word) => `"${word}"*`).join(' AND ');
+}
+
 // Turn a note into a safe download filename. Derived from the title, stripped
 // of anything a filesystem or Content-Disposition header would choke on, with
 // the id appended so two same-titled notes never collide in a zip.
@@ -95,10 +176,40 @@ export function noteFilename(note) {
   return `${base}-${note.id}.md`;
 }
 
+// The excerpt arrives as a raw slice of markdown; the list shows it as one
+// line, so flatten the whitespace here rather than in every caller.
+function tidy(rows) {
+  for (const row of rows) {
+    row.excerpt = row.excerpt.replace(/\s+/g, ' ').trim();
+  }
+  return rows;
+}
+
+// What the note list needs: everything except the bodies. Sending the bodies
+// meant a few hundred notes serialized into multiple megabytes on every
+// refresh -- and the list refreshes on every save, search and live event.
+// Bodies are fetched one at a time, by getNote, when a note is opened.
+export function listSummaries(query) {
+  const term = String(query ?? '').trim();
+  if (!term) return tidy(statements.listSummaries.all());
+
+  const match = ftsQuery(term);
+  if (match) {
+    const hits = tidy(statements.searchSummaries.all(match));
+    // FTS matches whole words and prefixes, so it misses a search for the
+    // middle of one ("ession"). Only pay for the full scan when the fast
+    // path found nothing.
+    if (hits.length > 0) return hits;
+  }
+  return tidy(statements.searchSummariesLike.all({ q: `%${escapeLike(term)}%` }));
+}
+
+// Bodies included. Only the export path wants this -- it is writing every note
+// out to a file, so it genuinely needs all of them at once.
 export function listNotes(query) {
   const term = String(query ?? '').trim();
-  if (!term) return statements.list.all();
-  return statements.search.all({ q: `%${escapeLike(term)}%` });
+  if (!term) return statements.listFull.all();
+  return statements.searchFull.all({ q: `%${escapeLike(term)}%` });
 }
 
 export function getNote(id) {

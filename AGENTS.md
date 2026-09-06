@@ -75,7 +75,7 @@ curl -s -X POST "$BASE/api/notes" \
 
 | Method | Path | Body / query | Purpose |
 | --- | --- | --- | --- |
-| `GET` | `/api/notes` | `?q=<term>` (optional) | List notes (pinned first, newest first); `q` searches title + body. |
+| `GET` | `/api/notes` | `?q=<term>`, `?full=1` (both optional) | List notes (pinned first, newest first); `q` searches title + body. Rows carry an `excerpt`, **not** the full `body` -- add `full=1` if you really need every body. |
 | `GET` | `/api/notes/:id` | -- | Fetch one note. |
 | `POST` | `/api/notes` | `{"body": "..."}` | Create. Returns the note (with `id`). `201`. |
 | `PUT` | `/api/notes/:id` | `{"body": "..."}` | Replace the body. Re-derives the title, bumps `updated_at`. |
@@ -90,6 +90,15 @@ Notes:
 - **Headers.** `X-Agent: <name>` on writes (author byline, above). `X-Client-Id: <id>` is
   optional and only for interactive UIs -- the SSE stream echoes it back so a browser can
   skip its own edits. Agents can ignore it.
+- **The list has no bodies.** `GET /api/notes` returns a summary per note -- every column
+  except `body`, plus a short `excerpt` for display. With a few hundred notes the full-body
+  list was multiple megabytes per request. To read a note, `GET /api/notes/:id`, which is
+  what the update discipline above already tells you to do. `?full=1` restores the old
+  shape if you genuinely want every body in one response.
+- **Search is full-text.** `q` runs against an FTS5 index: it matches whole words and
+  prefixes, so `q=mir dev` finds "MIR dev log" and `q=sess` finds "Session". If that
+  finds nothing it falls back to a substring scan, so searching the middle of a word
+  still works -- just slower.
 - **Markdown.** Bodies are rendered as GitHub-flavored markdown (sanitized) in the reader.
   Write real markdown -- headings, lists, code fences all work.
 - **No auth.** This app ships with no authentication because it's meant to be run locally
