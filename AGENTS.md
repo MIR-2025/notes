@@ -71,6 +71,30 @@ curl -s -X POST "$BASE/api/notes" \
    into the session recap. A substantive conversation worth keeping goes in its own note,
    verbatim, separate from any analysis of it.
 
+8. **Do not hard-wrap prose. One paragraph = one line.** Let the paragraph run long and
+   let the reader's window do the wrapping. Do *not* wrap it yourself at 80/90/100
+   columns the way you would a source file.
+
+   Why: the reader renders a single newline as a real line break, because in a *note* a
+   line break usually is deliberate. So every column you wrap at becomes a permanent
+   `<br>` -- the note reads fine in the app but carries hard breaks mid-sentence into
+   anything it is pasted into, and they never reflow. The renderer now unwraps the
+   obvious cases, but it is a heuristic recovering information you threw away; writing
+   one paragraph per line means it never has to guess.
+
+   ```md
+   Bad -- hard-wrapped, every wrap point becomes a <br>:
+   The list endpoint was returning every note's full body, which meant a few
+   hundred notes serialized into megabytes of JSON on every refresh.
+
+   Good -- one line, wraps naturally wherever it is read:
+   The list endpoint was returning every note's full body, which meant a few hundred notes serialized into megabytes of JSON on every refresh.
+   ```
+
+   **Keep your line breaks where they are meaningful** -- list items, verbatim
+   transcripts and DM logs, addresses, code inside fences. Those are content, and they
+   are preserved exactly. This rule is only about *prose paragraphs*.
+
 ## Full endpoint reference
 
 | Method | Path | Body / query | Purpose |
