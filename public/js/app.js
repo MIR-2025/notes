@@ -13,8 +13,66 @@ DOMPurify.addHook('afterSanitizeAttributes', (node) => {
   }
 });
 
+// Lines that never merge into the line below them: blank, heading, blockquote,
+// table row, fence marker, horizontal rule. (A list item is deliberately NOT
+// here -- a bullet whose own text wrapped should still absorb its continuation.)
+const NO_JOIN_FROM = /^\s*($|#{1,6}\s|>|\||```|~~~|(-{3,}|={3,}|_{3,}|\*{3,})\s*$)/;
+
+// Lines that begin a new block, so the line above them keeps its break.
+// `=====` / `-----` underline a setext heading -- joining the line above one
+// silently destroys the heading, so any run of 3+ counts as a block start.
+const BLOCK_START = /^\s*($|[-*+]\s|\d+[.)]\s|#{1,6}\s|>|\||```|~~~|(-{3,}|={3,}|_{3,}|\*{3,})\s*$|\[\^)/;
+
+// Below this a break was almost certainly deliberate -- a transcript stanza, an
+// address, a hand-typed list -- rather than a column wrap.
+const WRAP_MIN = 60;
+
+// Notes are hard-wrapped at ~90 columns, because that is how they get written.
+// With `breaks: true` every one of those wrap points became a <br>, so a note
+// copied out of the preview carried hard breaks mid-sentence that never reflow
+// in whatever it was pasted into. Join a line to the next only where it looks
+// like a wrap continuation; code fences, lists, tables, quotes, explicit
+// hard-break markers and short lines are left exactly as typed.
+//
+// Known edge: joining puts characters on one physical line, and marked matches
+// `~del~` only within a line -- so a paragraph with two stray tildes (a `~/path`
+// and another below it) can pick up a strikethrough it did not have. One note
+// in the current 471 does this; the alternative, `breaks: false`, would collapse
+// 23k deliberate breaks across 72% of them, which is far worse.
+function unwrapHardBreaks(md) {
+  const lines = String(md ?? '').split('\n');
+  const out = [];
+  let inFence = false;
+  let joinedInto = false; // the previous line absorbed this one -- drop its indent
+
+  for (let i = 0; i < lines.length; i++) {
+    let line = lines[i];
+    if (/^\s*(```|~~~)/.test(line)) inFence = !inFence;
+
+    if (joinedInto) line = line.replace(/^\s+/, '');
+    joinedInto = false;
+
+    const next = lines[i + 1];
+    const joinable =
+      !inFence &&
+      next !== undefined &&
+      !NO_JOIN_FROM.test(line) &&
+      !/(\\|\s{2})$/.test(line) && // markdown's own hard-break markers -- honour them
+      !BLOCK_START.test(next) &&
+      line.trim().length >= WRAP_MIN;
+
+    if (joinable) {
+      out.push(line.replace(/\s+$/, ''), ' ');
+      joinedInto = true;
+    } else {
+      out.push(line, '\n');
+    }
+  }
+  return out.join('').replace(/\n$/, '');
+}
+
 function renderMarkdown(text) {
-  return DOMPurify.sanitize(marked.parse(text));
+  return DOMPurify.sanitize(marked.parse(unwrapHardBreaks(text)));
 }
 
 const els = {
