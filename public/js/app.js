@@ -163,13 +163,38 @@ function setStatus(text) {
   els.status.textContent = text;
 }
 
+// SQLite hands back "YYYY-MM-DD HH:MM:SS" in UTC with no zone marker, so tag it
+// as UTC explicitly -- left bare, the browser would read it as local time and
+// every stamp in the app would be wrong by the offset.
+function parseStamp(value) {
+  return new Date(`${value.replace(' ', 'T')}Z`);
+}
+
+// Always the time, not just the day: the hour is half of what places a note when
+// several land on the same date. Today shows the time alone (the date would be
+// the same on every such row), and anything outside the current year gains a
+// year, so a note from last September never reads as this September's.
 function formatDate(value) {
-  // SQLite hands back "YYYY-MM-DD HH:MM:SS" in UTC with no zone marker.
-  const date = new Date(`${value.replace(' ', 'T')}Z`);
-  const today = new Date().toDateString() === date.toDateString();
-  return today
-    ? date.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })
-    : date.toLocaleDateString([], { month: 'short', day: 'numeric' });
+  const date = parseStamp(value);
+  const now = new Date();
+  const time = date.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
+  if (now.toDateString() === date.toDateString()) return time;
+
+  const day = date.toLocaleDateString([], {
+    month: 'short',
+    day: 'numeric',
+    ...(date.getFullYear() === now.getFullYear() ? {} : { year: 'numeric' })
+  });
+  return `${day}, ${time}`;
+}
+
+// The exact stamps, for a row's hover tooltip. Seconds resolve the ties the
+// minute-level label cannot, and `created_at` is otherwise not shown anywhere
+// in the UI -- the list only ever talks about the last edit.
+function fullStamp(note) {
+  const at = (value) =>
+    parseStamp(value).toLocaleString([], { dateStyle: 'medium', timeStyle: 'medium' });
+  return `Edited ${at(note.updated_at)}\nCreated ${at(note.created_at)}`;
 }
 
 function preview(note) {
@@ -241,6 +266,7 @@ function renderList() {
     meta.className = 'note-meta';
     meta.textContent = `${formatDate(note.updated_at)} -- ${preview(note)}`;
 
+    li.title = fullStamp(note);
     li.append(title, meta);
     li.addEventListener('click', () => open(note.id));
     els.list.append(li);
