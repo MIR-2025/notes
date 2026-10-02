@@ -39,6 +39,29 @@
         type="search"
         placeholder="Search notes"
         autocomplete="off">
+      <div class="list-controls">
+        <select id="sort" class="form-select form-select-sm" aria-label="Sort notes by">
+          <option value="relevance">Best match</option>
+          <option value="updated_desc">Recently edited</option>
+          <option value="updated_asc">Oldest edited</option>
+          <option value="created_desc">Recently created</option>
+          <option value="created_asc">Oldest created</option>
+          <option value="title_asc">Title A-Z</option>
+          <option value="title_desc">Title Z-A</option>
+        </select>
+        <button
+          id="pin-first"
+          class="btn btn-outline-secondary btn-sm pin-first"
+          type="button"
+          aria-pressed="true"
+          title="Pinned notes first">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+            stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <path d="M12 17v5M9 3h6l-1 6 3 3v2H7v-2l3-3-1-6z"></path>
+          </svg>
+        </button>
+      </div>
+      <p id="sort-note" class="sort-note d-none"></p>
     </div>
     <ul id="note-list" class="note-list"></ul>
     <p id="empty-list" class="empty-list d-none">No notes yet.</p>
@@ -77,7 +100,8 @@
         <kbd>Ctrl</kbd> + <kbd>N</kbd> new &middot;
         <kbd>Ctrl</kbd> + <kbd>K</kbd> search &middot;
         <kbd>Ctrl</kbd> + <kbd>E</kbd> preview &middot;
-        <kbd>Ctrl</kbd> + <kbd>P</kbd> PDF
+        <kbd>Ctrl</kbd> + <kbd>P</kbd> PDF &middot;
+        <kbd>Ctrl</kbd> + <kbd>&uarr;</kbd>/<kbd>&darr;</kbd> sort
       </p>
     </div>
   </main>

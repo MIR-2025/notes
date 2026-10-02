@@ -99,14 +99,14 @@ curl -s -X POST "$BASE/api/notes" \
 
 | Method | Path | Body / query | Purpose |
 | --- | --- | --- | --- |
-| `GET` | `/api/notes` | `?q=<term>`, `?full=1` (both optional) | List notes (pinned first, newest first); `q` searches title + body. Rows carry an `excerpt`, **not** the full `body` -- add `full=1` if you really need every body. |
+| `GET` | `/api/notes` | `?q=<term>`, `?sort=<key>`, `?pinned=mixed`, `?full=1` (all optional) | List notes; `q` searches title + body. Default order is pinned first, then best match (which means newest first when there is no `q`). Rows carry an `excerpt`, **not** the full `body` -- add `full=1` if you really need every body. |
 | `GET` | `/api/notes/:id` | -- | Fetch one note. |
 | `POST` | `/api/notes` | `{"body": "..."}` | Create. Returns the note (with `id`). `201`. |
 | `PUT` | `/api/notes/:id` | `{"body": "..."}` | Replace the body. Re-derives the title, bumps `updated_at`. |
 | `PATCH` | `/api/notes/:id/pin` | `{"pinned": true\|false}` | Pin / unpin. Deliberately leaves `author` untouched. |
 | `DELETE` | `/api/notes/:id` | -- | Delete. `204`. |
 | `GET` | `/api/notes/:id/download` | -- | The note as a `.md` file. |
-| `GET` | `/api/export` | `?q=<term>` (optional) | Every note as a `.md`, zipped. |
+| `GET` | `/api/export` | `?q=<term>`, `?sort=<key>`, `?pinned=mixed` (all optional) | Every note as a `.md`, zipped. |
 | `GET` | `/api/stream` | -- | SSE feed of `created` / `updated` / `deleted` events (for live UIs). |
 
 Notes:
@@ -123,6 +123,20 @@ Notes:
   prefixes, so `q=mir dev` finds "MIR dev log" and `q=sess` finds "Session". If that
   finds nothing it falls back to a substring scan, so searching the middle of a word
   still works -- just slower.
+- **Sorting.** `?sort=` takes one of `relevance` (the default), `updated_desc`,
+  `updated_asc`, `created_desc`, `created_asc`, `title_asc`, `title_desc`. An
+  unrecognised value is ignored rather than rejected, so a typo gets you the default
+  rather than a `400`.
+  - `relevance` is the FTS5 bm25 score, weighted 10:1 toward the title, so a note
+    *about* a term beats one that mentions it in passing. It needs a full-text match to
+    score: with no `q`, or on the substring fallback, it quietly becomes `updated_desc`.
+    That is why it can be the standing default -- on an unfiltered list it just means
+    "newest first."
+  - The **`X-Sort` response header** on `GET /api/notes` names the ordering actually
+    applied, which is how you tell a real ranking from that fallback. The response body
+    is still a bare array; nothing about the JSON changed.
+  - `?pinned=mixed` stops pinned notes heading the list and lets them sort with
+    everything else. Omit it for the old behaviour.
 - **Markdown.** Bodies are rendered as GitHub-flavored markdown (sanitized) in the reader.
   Write real markdown -- headings, lists, code fences all work.
 - **No auth.** This app ships with no authentication because it's meant to be run locally

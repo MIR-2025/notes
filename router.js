@@ -1,5 +1,7 @@
 import { Router } from 'express';
 import {
+  DEFAULT_SORT,
+  SORTS,
   listNotes,
   listSummaries,
   getNote,
@@ -38,6 +40,20 @@ function agentName(req) {
   return raw.replace(/[\x00-\x1f\x7f]/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 60) || null;
 }
 
+// How the caller wants the list ordered. Both knobs are optional and both fall
+// back to what this app has always done -- pinned first, then relevance or
+// recency -- so every existing caller keeps the order it already gets.
+// An unrecognised `sort` is ignored rather than rejected: a list request is not
+// worth a 400 over a typo in a query string.
+function listOptions(req) {
+  const asked = req.query.sort;
+  return {
+    sort: typeof asked === 'string' && Object.hasOwn(SORTS, asked) ? asked : DEFAULT_SORT,
+    // Pinned notes head the list unless asked to sit in line with the rest.
+    pinnedFirst: req.query.pinned !== 'mixed'
+  };
+}
+
 function parseId(req, res) {
   const id = Number(req.params.id);
   if (!Number.isInteger(id) || id < 1) {
@@ -56,9 +72,18 @@ router.get('/', (_req, res) => {
 // on every save, keystroke and live event. Each row carries a short `excerpt`
 // instead; a body is fetched by GET /api/notes/:id when a note is opened.
 // `?full=1` restores the old shape for any caller that really wants bodies.
+// `?sort=` picks the ordering (see SORTS in db.js) and `?pinned=mixed` lets
+// pinned notes sort in line with the rest instead of heading the list.
 router.get('/api/notes', (req, res) => {
   const full = req.query.full === '1' || req.query.full === 'true';
-  res.json(full ? listNotes(req.query.q) : listSummaries(req.query.q));
+  const options = listOptions(req);
+  const result = full ? listNotes(req.query.q, options) : listSummaries(req.query.q, options);
+
+  // The ordering actually applied, which is not always the one asked for --
+  // `relevance` has nothing to rank without a full-text match. It rides in a
+  // header because the body stays a bare array, so no existing caller notices.
+  res.set('X-Sort', result.sort);
+  res.json(result.notes);
 });
 
 // Live feed of note changes. One way, server -> browser, so plain SSE rather
@@ -88,7 +113,7 @@ router.get('/api/stream', (req, res) => {
 // Every note as a .md file, zipped. Defined before the :id routes so "export"
 // is never mistaken for a note id.
 router.get('/api/export', (req, res) => {
-  const notes = listNotes(req.query.q);
+  const { notes } = listNotes(req.query.q, listOptions(req));
   if (notes.length === 0) return res.status(404).json({ error: 'No notes to export' });
 
   const files = notes.map((note) => ({

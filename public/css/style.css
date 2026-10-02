@@ -52,6 +52,43 @@ body {
   display: none;
 }
 
+/* Sort row under the search box. The select takes the space; the pin toggle
+   stays square beside it. */
+.list-controls {
+  display: flex;
+  gap: 0.5rem;
+  margin-top: 0.5rem;
+}
+
+.list-controls .form-select {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.pin-first {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: 0 0 auto;
+}
+
+/* Pressed = pinned notes are being held at the top. Bootstrap's own .active
+   does not reach an aria-pressed button, so drive it off the attribute and the
+   state can never disagree with what assistive tech is told. */
+.pin-first[aria-pressed='true'] {
+  background: var(--bs-secondary-bg);
+  color: var(--bs-emphasis-color);
+  border-color: var(--bs-emphasis-color);
+}
+
+/* Only shown when the ordering applied is not the one selected. */
+.sort-note {
+  margin: 0.5rem 0 0;
+  font-size: 0.75rem;
+  line-height: 1.3;
+  color: var(--bs-secondary-color);
+}
+
 .note-list {
   list-style: none;
   margin: 0;

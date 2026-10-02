@@ -91,6 +91,9 @@ const els = {
   download: document.getElementById('download-note'),
   pdf: document.getElementById('pdf-note'),
   exportAll: document.getElementById('export-all'),
+  sort: document.getElementById('sort'),
+  pinFirst: document.getElementById('pin-first'),
+  sortNote: document.getElementById('sort-note'),
   themeToggle: document.getElementById('theme-toggle'),
   printArea: document.getElementById('print-area')
 };
@@ -98,11 +101,38 @@ const els = {
 const SAVE_DELAY = 600;
 const PREVIEW_KEY = 'notes:preview';
 const THEME_KEY = 'notes:theme';
+const SORT_KEY = 'notes:sort';
+const PIN_FIRST_KEY = 'notes:pinFirst';
+
+// Mirrors DEFAULT_SORT in db.js. "Best match" and not a recency order, because
+// the server degrades it to recency whenever there is nothing to rank -- so one
+// setting covers both an idle list and an active search.
+const DEFAULT_SORT = 'relevance';
+
+// Mirrors the server's ORDER BY for the sorts that can be recomputed from a
+// summary row. `relevance` deliberately has no entry: bm25 lives inside the FTS
+// index and cannot be worked out here, which is what patchLocal() is about.
+// Title ordering is the one near-miss -- SQLite's COLLATE NOCASE folds ASCII
+// only, localeCompare folds everything -- and it applies solely to a row being
+// slotted back in locally, which the next refresh re-sorts properly anyway.
+const COMPARATORS = {
+  updated_desc: (a, b) => b.updated_at.localeCompare(a.updated_at),
+  updated_asc: (a, b) => a.updated_at.localeCompare(b.updated_at),
+  created_desc: (a, b) => b.created_at.localeCompare(a.created_at),
+  created_asc: (a, b) => a.created_at.localeCompare(b.created_at),
+  title_asc: (a, b) => a.title.localeCompare(b.title, undefined, { sensitivity: 'base' }),
+  title_desc: (a, b) => b.title.localeCompare(a.title, undefined, { sensitivity: 'base' })
+};
 
 // Identifies this tab so the live feed can skip the echo of our own edits.
 const CLIENT_ID = crypto.randomUUID();
 
 let notes = [];
+// What is selected in the dropdown, versus what the server reports it actually
+// ordered by. They differ when "Best match" has nothing to rank.
+let sortKey = DEFAULT_SORT;
+let effectiveSort = DEFAULT_SORT;
+let pinnedFirst = true;
 let currentId = null;
 let saveTimer = null;
 let dirty = false;
@@ -119,6 +149,14 @@ async function api(path, options = {}) {
   });
   if (!res.ok) throw new Error(`${res.status} ${res.statusText}`);
   return res.status === 204 ? null : res.json();
+}
+
+// api() hands back only the parsed body; the list also needs a response header
+// off the same request (X-Sort), so it goes through this instead.
+async function apiWithHeaders(path) {
+  const res = await fetch(path, { headers: { 'X-Client-Id': CLIENT_ID } });
+  if (!res.ok) throw new Error(`${res.status} ${res.statusText}`);
+  return { data: await res.json(), headers: res.headers };
 }
 
 function setStatus(text) {
@@ -149,15 +187,31 @@ function toSummary(note) {
   };
 }
 
-// The same order the server lists in: pinned first, then newest edit first.
+// The same order the server listed in, so a locally patched row lands where a
+// refetch would have put it. Falls back to recency for an ordering that has no
+// local comparator -- which only `relevance` does, and patchLocal never gets
+// that far.
 function sortNotes() {
-  notes.sort((a, b) => b.pinned - a.pinned || b.updated_at.localeCompare(a.updated_at));
+  const compare = COMPARATORS[effectiveSort] ?? COMPARATORS.updated_desc;
+  notes.sort(
+    (a, b) => (pinnedFirst ? b.pinned - a.pinned : 0) || compare(a, b) || b.id - a.id
+  );
 }
 
 // Fold one changed note into the list in place, instead of refetching all of
 // them. Saving is the hottest request in the app -- it fires on every pause in
 // typing -- and it already has the updated note in hand.
 function patchLocal(note) {
+  // Not while a search is running. An edit can change whether the note still
+  // matches the term at all, and under "Best match" it changes where the note
+  // ranks -- neither of which is knowable here. Ask the server instead. (This
+  // also fixes an older wrinkle: a note edited out of its own search results
+  // used to sit there until the next full refresh.)
+  if (els.search.value.trim()) {
+    refreshList().catch((err) => console.error(err));
+    return;
+  }
+
   const summary = toSummary(note);
   const at = notes.findIndex((n) => n.id === note.id);
   if (at === -1) notes.push(summary);
@@ -193,9 +247,77 @@ function renderList() {
   }
 }
 
-async function refreshList() {
+// localStorage throws outright in some private-browsing modes, so every read
+// and write of a preference goes through these. A lost preference is a session
+// on the defaults, never a broken list.
+function remember(key, value) {
+  try {
+    localStorage.setItem(key, value);
+  } catch {
+    /* no storage -- the choice still holds for this session */
+  }
+}
+
+function recall(key) {
+  try {
+    return localStorage.getItem(key);
+  } catch {
+    return null;
+  }
+}
+
+function setSort(value, { refresh = true } = {}) {
+  sortKey = value;
+  els.sort.value = value;
+  remember(SORT_KEY, value);
+  if (refresh) refreshList().catch((err) => console.error(err));
+}
+
+function setPinnedFirst(on, { refresh = true } = {}) {
+  pinnedFirst = on;
+  els.pinFirst.setAttribute('aria-pressed', String(on));
+  els.pinFirst.title = on ? 'Pinned notes first' : 'Pinned notes sort with the rest';
+  remember(PIN_FIRST_KEY, on ? '1' : '0');
+  if (refresh) refreshList().catch((err) => console.error(err));
+}
+
+// Run once at boot, before the first list request, so the opening view is the
+// one that was left behind rather than the defaults followed by a visible jump.
+function restorePrefs() {
+  const saved = recall(SORT_KEY);
+  const known = [...els.sort.options].some((option) => option.value === saved);
+  setSort(known ? saved : DEFAULT_SORT, { refresh: false });
+  setPinnedFirst(recall(PIN_FIRST_KEY) !== '0', { refresh: false });
+}
+
+// The query string every list-shaped request shares, so the export downloads
+// exactly the notes in exactly the order the sidebar is showing.
+function listParams() {
+  const params = new URLSearchParams();
   const query = els.search.value.trim();
-  notes = await api(`/api/notes?q=${encodeURIComponent(query)}`);
+  if (query) params.set('q', query);
+  params.set('sort', sortKey);
+  if (!pinnedFirst) params.set('pinned', 'mixed');
+  return params;
+}
+
+// Say so when the ordering applied is not the one selected, rather than leaving
+// the dropdown quietly lying. Only happens on a search that fell through to the
+// substring scan, which computes no relevance score.
+function renderSortNote() {
+  const mismatch = effectiveSort !== sortKey && els.search.value.trim() !== '';
+  els.sortNote.classList.toggle('d-none', !mismatch);
+  if (mismatch) {
+    els.sortNote.textContent =
+      'Matched inside words, so there is nothing to rank -- ordered by most recently edited.';
+  }
+}
+
+async function refreshList() {
+  const { data, headers } = await apiWithHeaders(`/api/notes?${listParams()}`);
+  notes = data;
+  effectiveSort = headers.get('X-Sort') ?? sortKey;
+  renderSortNote();
   renderList();
 }
 
@@ -338,9 +460,10 @@ async function downloadCurrent() {
 }
 
 function exportAll() {
-  // Respect the active search filter: what you see is what you export.
-  const query = els.search.value.trim();
-  triggerDownload(`/api/export${query ? `?q=${encodeURIComponent(query)}` : ''}`);
+  // Respect the active search filter and ordering: what you see is what you
+  // export. (The export path matches with LIKE only, so a search that FTS
+  // answered can pull a few extra notes into the zip -- broader, never fewer.)
+  triggerDownload(`/api/export?${listParams()}`);
 }
 
 // Render the open note into the hidden print area. Runs on `beforeprint`, so it
@@ -470,6 +593,14 @@ els.search.addEventListener('input', () => {
   searchTimer = setTimeout(refreshList, 150);
 });
 
+els.sort.addEventListener('change', () => {
+  setSort(els.sort.value);
+});
+
+els.pinFirst.addEventListener('click', () => {
+  setPinnedFirst(!pinnedFirst);
+});
+
 els.body.addEventListener('input', scheduleSave);
 els.newNote.addEventListener('click', createNote);
 els.pin.addEventListener('click', togglePin);
@@ -510,6 +641,13 @@ document.addEventListener('keydown', (event) => {
   } else if (event.key === 'e') {
     event.preventDefault();
     if (currentId !== null) setPreview(!previewing);
+  } else if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
+    // Step through the orderings without leaving the keyboard, the same way
+    // Ctrl+K reaches the search box.
+    event.preventDefault();
+    const options = [...els.sort.options].map((option) => option.value);
+    const next = options.indexOf(sortKey) + (event.key === 'ArrowDown' ? 1 : -1);
+    setSort(options[(next + options.length) % options.length]);
   } else if (event.key === 'p' && currentId !== null) {
     // Route the native print shortcut through our flow so it saves first and
     // prints just the note, not the whole app chrome.
@@ -541,6 +679,7 @@ document.addEventListener('visibilitychange', () => {
 });
 
 setPreview(localStorage.getItem(PREVIEW_KEY) === '1');
+restorePrefs();
 await refreshList();
 if (notes.length > 0) await open(notes[0].id);
 connectStream();

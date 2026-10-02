@@ -5,8 +5,8 @@ stored locally in SQLite. No accounts, no cloud, no build step.
 
 ## Features
 
-- **Two-pane UI** -- a searchable list (pinned first, then most recently edited)
-  next to a distraction-free editor.
+- **Two-pane UI** -- a searchable, sortable list next to a distraction-free
+  editor.
 - **Autosave** -- saves ~600ms after you stop typing. No save button to hunt for.
 - **No title field** -- the first line of a note becomes its title.
 - **Markdown preview** (`Ctrl+E`) -- GitHub-flavored markdown, sanitized with
@@ -16,7 +16,12 @@ stored locally in SQLite. No accounts, no cloud, no build step.
   without a reload. An incoming change never clobbers what you're typing.
 - **Download** -- any note as a `.md` file, or every note as a `.zip` of `.md`
   files (respecting the active search filter). The zip writer is dependency-free.
-- **Search** -- instant substring match across every note.
+- **Search** -- an FTS5 full-text index over titles and bodies, with a substring
+  scan behind it so searching the middle of a word still works.
+- **Sort** -- seven orderings from the dropdown under the search box: best match
+  (bm25 relevance, weighted toward the title), edited or created in either
+  direction, and title A-Z or Z-A. The pin button beside it decides whether
+  pinned notes head the list or sort in with the rest. Both choices persist.
 
 ## Stack
 
@@ -44,17 +49,19 @@ its location with the `DB_PATH` environment variable, or the port with `PORT`.
 | `Ctrl/Cmd + K` | Focus search |
 | `Ctrl/Cmd + E` | Toggle markdown preview |
 | `Ctrl/Cmd + S` | Force save now |
+| `Ctrl/Cmd + P` | Save the open note as a PDF |
+| `Ctrl/Cmd + ↑ / ↓` | Step through the sort orders |
 
 ## API
 
 | Method | Route | Purpose |
 | --- | --- | --- |
-| `GET` | `/api/notes?q=` | List / search notes (summaries -- no bodies; `&full=1` for bodies) |
+| `GET` | `/api/notes?q=` | List / search notes (summaries -- no bodies; `&full=1` for bodies). `&sort=` and `&pinned=mixed` set the order; the `X-Sort` response header names the order actually applied |
 | `POST` | `/api/notes` | Create a note (`{ body }`) |
 | `GET` | `/api/notes/:id` | Fetch one note |
 | `PUT` | `/api/notes/:id` | Update a note (`{ body }`) |
 | `PATCH` | `/api/notes/:id/pin` | Pin / unpin (`{ pinned }`) |
 | `DELETE` | `/api/notes/:id` | Delete a note |
 | `GET` | `/api/notes/:id/download` | Download one note as `.md` |
-| `GET` | `/api/export?q=` | Download all (matching) notes as a `.zip` |
+| `GET` | `/api/export?q=` | Download all (matching) notes as a `.zip`; takes the same `sort` / `pinned` params |
 | `GET` | `/api/stream` | Server-Sent Events feed of changes |
