@@ -159,6 +159,34 @@ async function apiWithHeaders(path) {
   return { data: await res.json(), headers: res.headers };
 }
 
+// Deep link to a single note: /?id=123 opens it straight away. The param is
+// kept in sync as you move around, so whatever is on screen is always what the
+// address bar would reopen -- copy it anywhere and it lands on the same note.
+const ID_PARAM = 'id';
+
+// Only ever a positive integer. A hand-typed or stale value resolves to null
+// and the app falls back to its normal opening behaviour rather than firing a
+// request it knows will 400.
+function idFromUrl() {
+  const id = Number(new URLSearchParams(location.search).get(ID_PARAM));
+  return Number.isInteger(id) && id > 0 ? id : null;
+}
+
+// `push` writes a history entry, so Back and Forward step between the notes you
+// opened. The entry the page BOOTS on must replace instead: pushing there would
+// leave the pre-load state behind the first note, and Back would land on a
+// blank editor rather than leaving the app.
+function syncUrl(id, { push = false } = {}) {
+  const url = new URL(location.href);
+  if (id === null) url.searchParams.delete(ID_PARAM);
+  else url.searchParams.set(ID_PARAM, String(id));
+
+  // Re-pushing an identical URL would stack duplicate history entries that Back
+  // appears to ignore, because each one restores the same note.
+  if (url.href === location.href) return;
+  history[push ? 'pushState' : 'replaceState']({ id }, '', url);
+}
+
 function setStatus(text) {
   els.status.textContent = text;
 }
@@ -268,7 +296,9 @@ function renderList() {
 
     li.title = fullStamp(note);
     li.append(title, meta);
-    li.addEventListener('click', () => open(note.id));
+    // Deleted from another tab a moment ago -> 404. Log it; the list refresh
+    // that follows the delete event drops the row anyway.
+    li.addEventListener('click', () => open(note.id).catch((err) => console.error(err)));
     els.list.append(li);
   }
 }
@@ -358,6 +388,19 @@ function flashRow(id) {
   });
 }
 
+// Drop the open note without touching the list. Deliberately does NOT re-render
+// -- both callers that remove a note refresh the whole list immediately after,
+// and rebuilding a thousand rows twice is worth avoiding. Anything else calling
+// this renders for itself.
+function closeEditor() {
+  clearTimeout(saveTimer);
+  dirty = false;
+  currentId = null;
+  els.body.value = '';
+  showEditor(false);
+  syncUrl(null);
+}
+
 function showEditor(show) {
   els.pane.classList.toggle('d-none', !show);
   els.editorEmpty.classList.toggle('d-none', show);
@@ -389,14 +432,20 @@ function setPreview(on) {
   if (!on) els.body.focus();
 }
 
-async function open(id) {
+// `push` is false when the URL already says this note -- on boot, and when Back
+// or Forward is what asked for it -- so navigating does not re-push the entry it
+// just arrived at.
+async function open(id, { push = true } = {}) {
   if (id === currentId) return;
   await flush();
 
   // The list carries no bodies, so opening a note always fetches it. That is
-  // one small request instead of preloading every body up front.
+  // one small request instead of preloading every body up front. A 404 here
+  // throws before anything is mutated, so a dead link leaves the open note
+  // exactly as it was.
   const note = await api(`/api/notes/${id}`);
   currentId = note.id;
+  syncUrl(note.id, { push });
   els.body.value = note.body;
   els.pin.textContent = note.pinned ? 'Unpin' : 'Pin';
   setStatus(`Edited ${formatDate(note.updated_at)}`);
@@ -547,9 +596,7 @@ async function removeNote() {
   clearTimeout(saveTimer);
   dirty = false;
   await api(`/api/notes/${currentId}`, { method: 'DELETE' });
-  currentId = null;
-  els.body.value = '';
-  showEditor(false);
+  closeEditor();
   await refreshList();
 }
 
@@ -562,11 +609,7 @@ async function handleEvent(event) {
   if (event.origin === CLIENT_ID) return;
 
   if (event.type === 'deleted' && event.id === currentId) {
-    clearTimeout(saveTimer);
-    dirty = false;
-    currentId = null;
-    els.body.value = '';
-    showEditor(false);
+    closeEditor();
   }
 
   if (event.type === 'updated' && event.note.id === currentId) {
@@ -704,8 +747,41 @@ document.addEventListener('visibilitychange', () => {
   }).catch(() => {});
 });
 
+// Back and Forward move between the notes opened this visit. The URL is the
+// source of truth here, so `push: false` -- the entry already exists, we are
+// travelling to it rather than creating it.
+window.addEventListener('popstate', () => {
+  const id = idFromUrl();
+  if (id === null) {
+    // Walked back past the first note opened. Let go of it; the editor is only
+    // ever a view of whatever the URL names.
+    closeEditor();
+    renderList();
+    return;
+  }
+  open(id, { push: false }).catch((err) => console.error(err));
+});
+
 setPreview(localStorage.getItem(PREVIEW_KEY) === '1');
 restorePrefs();
 await refreshList();
-if (notes.length > 0) await open(notes[0].id);
+
+// Open what the URL asks for, else the top of the list. A link can outlive the
+// note it points at, so a failure here falls back rather than booting into a
+// broken editor -- and it must not throw, because an unhandled rejection at
+// this top level would skip connectStream() and leave the app with no live
+// feed at all.
+const requested = idFromUrl();
+if (requested !== null) {
+  try {
+    await open(requested, { push: false });
+  } catch (err) {
+    console.error(`No note ${requested} -- it may have been deleted.`, err);
+    syncUrl(null);
+  }
+}
+if (currentId === null && notes.length > 0) {
+  await open(notes[0].id, { push: false }).catch((err) => console.error(err));
+}
+
 connectStream();

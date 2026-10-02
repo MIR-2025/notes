@@ -8,6 +8,9 @@ stored locally in SQLite. No accounts, no cloud, no build step.
 - **Two-pane UI** -- a searchable, sortable list next to a distraction-free
   editor.
 - **Autosave** -- saves ~600ms after you stop typing. No save button to hunt for.
+- **Deep links** -- `/?id=123` opens that note directly. The param tracks
+  whatever is on screen, so the address bar is always a copyable link to the
+  note you are reading, and Back / Forward step through the ones you opened.
 - **No title field** -- the first line of a note becomes its title.
 - **Markdown preview** (`Ctrl+E`) -- GitHub-flavored markdown, sanitized with
   DOMPurify so pasted HTML can never execute.

@@ -111,6 +111,11 @@ curl -s -X POST "$BASE/api/notes" \
 
 Notes:
 
+- **Link to what you wrote.** `POST` returns the note's `id`, and the reader opens
+  a single note at **`/?id=<id>`** -- so `http://localhost:26715/?id=1053` is a direct
+  link to note 1053. When you tell a human you have written something up, give them
+  that URL rather than making them search the list for it. An `id` that no longer
+  exists falls back to the normal view instead of erroring.
 - **Headers.** `X-Agent: <name>` on writes (author byline, above). `X-Client-Id: <id>` is
   optional and only for interactive UIs -- the SSE stream echoes it back so a browser can
   skip its own edits. Agents can ignore it.
