@@ -2,6 +2,7 @@ import { DatabaseSync } from 'node:sqlite';
 import { mkdirSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { summarizeMedia } from './media.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const DB_PATH = process.env.DB_PATH || join(__dirname, 'data', 'notes.db');
@@ -205,10 +206,13 @@ export function noteFilename(note) {
 }
 
 // The excerpt arrives as a raw slice of markdown; the list shows it as one
-// line, so flatten the whitespace here rather than in every caller.
+// line, so flatten the whitespace here rather than in every caller. An image
+// reference is collapsed to its alt text first -- 64 characters of content hash
+// would otherwise be the entire visible preview for any note that leads with a
+// screenshot.
 function tidy(rows) {
   for (const row of rows) {
-    row.excerpt = row.excerpt.replace(/\s+/g, ' ').trim();
+    row.excerpt = summarizeMedia(row.excerpt).replace(/\s+/g, ' ').trim();
   }
   return rows;
 }

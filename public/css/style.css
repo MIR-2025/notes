@@ -313,8 +313,19 @@ body {
   border-color: var(--bs-border-color);
 }
 
+/* `height: auto` is load-bearing, not decoration: a raw <img width="800"> with
+   no height attribute would otherwise keep its stated height while max-width
+   clamped the width, and the image would come out squashed. */
 .note-preview img {
   max-width: 100%;
+  height: auto;
+}
+
+/* Drag an image over the editor. An inset outline rather than a border, so
+   nothing in the pane shifts by two pixels as it appears. */
+.editor-pane.drop-target {
+  outline: 2px dashed var(--bs-primary);
+  outline-offset: -3px;
 }
 
 .editor-empty {
@@ -464,6 +475,9 @@ body {
 
   #print-area img {
     max-width: 100%;
+    height: auto;
+    /* Nothing is gained by an image split across a page break. */
+    break-inside: avoid;
   }
 
   #print-area a {

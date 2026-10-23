@@ -108,6 +108,9 @@ curl -s -X POST "$BASE/api/notes" \
 | `GET` | `/api/notes/:id/download` | -- | The note as a `.md` file. |
 | `GET` | `/api/export` | `?q=<term>`, `?sort=<key>`, `?pinned=mixed` (all optional) | Every note as a `.md`, zipped. |
 | `GET` | `/api/stream` | -- | SSE feed of `created` / `updated` / `deleted` events (for live UIs). |
+| `POST` | `/api/media` | the raw image bytes | Upload an image. Returns `{ name, url, type, bytes, deduped }`. |
+| `GET` | `/api/media` | -- | Every stored image, each flagged `referenced` or not. |
+| `POST` | `/api/media/sweep` | `{"delete": true}` (optional) | List unreferenced images; with `delete` set, remove them. |
 
 Notes:
 
@@ -148,6 +151,42 @@ Notes:
   (bound to your own machine). Do **not** expose it to the public internet as-is -- an
   open write endpoint is an abuse magnet. If you need off-box access, put it behind a
   guard (a reverse proxy with a token, a VPN, Cloudflare Access) first.
+
+## Posting an image
+
+A note can carry images, and you can put them there. Upload the bytes, get back a
+URL, write the URL into the body as ordinary markdown. Useful when the thing
+worth recording is a screenshot -- a UI you just changed, a graph, a failing
+render -- rather than a description of one.
+
+```sh
+URL=$(curl -s -X POST "$BASE/api/media" \
+        -H 'Content-Type: image/png' -H "X-Agent: $AGENT" \
+        --data-binary @screenshot.png \
+      | python3 -c 'import sys,json; print(json.load(sys.stdin)["url"])')
+
+# ...then just reference it in the body like any other markdown image.
+# "![the sidebar after the fix]($URL)"
+```
+
+Things worth knowing:
+
+- **The bytes are the body.** Not multipart, not JSON, not base64 -- `--data-binary`
+  and an `image/*` Content-Type. The one header that will NOT work is
+  `application/json`: the app-wide JSON parser grabs that body first and chokes.
+  The format is decided by sniffing the magic bytes, so the header only has to
+  avoid being JSON.
+- **png, jpg, gif, webp, avif. Up to 10MB.** Anything else is a `415`, a body
+  over the limit is a `413`. **SVG is refused deliberately** -- it can carry
+  `<script>` and would be served from this app's own origin.
+- **The URL is a sha256 of the content**, so uploading the same image twice is
+  free and returns the same URL with `"deduped": true`. Never a duplicate file.
+- **Do not inline a data: URI instead.** It would land in the note body, which
+  means in the FTS index, in the browser's textarea, and re-sent on every
+  autosave. A link is ~90 characters; a screenshot is megabytes.
+- **Nothing is deleted when a note is**, because several notes can share one
+  file. `POST /api/media/sweep` lists what is unreferenced; `{"delete": true}`
+  removes it. Images stored in the last hour are spared.
 
 ## Minimal lifecycle example
 

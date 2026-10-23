@@ -14,14 +14,21 @@ DOMPurify.addHook('afterSanitizeAttributes', (node) => {
 });
 
 // Lines that never merge into the line below them: blank, heading, blockquote,
-// table row, fence marker, horizontal rule. (A list item is deliberately NOT
-// here -- a bullet whose own text wrapped should still absorb its continuation.)
-const NO_JOIN_FROM = /^\s*($|#{1,6}\s|>|\||```|~~~|(-{3,}|={3,}|_{3,}|\*{3,})\s*$)/;
+// table row, fence marker, horizontal rule, image. (A list item is deliberately
+// NOT here -- a bullet whose own text wrapped should still absorb its
+// continuation.)
+//
+// `![` is on the list because an image URL is long: a media reference is ~90
+// characters, which clears WRAP_MIN on its own, so an image on its own line
+// looked exactly like a wrapped sentence and swallowed its own caption. It
+// appears in BLOCK_START too -- an image line is a block from both directions,
+// so the line of prose above one keeps its break as well.
+const NO_JOIN_FROM = /^\s*($|#{1,6}\s|>|\||```|~~~|!\[|(-{3,}|={3,}|_{3,}|\*{3,})\s*$)/;
 
 // Lines that begin a new block, so the line above them keeps its break.
 // `=====` / `-----` underline a setext heading -- joining the line above one
 // silently destroys the heading, so any run of 3+ counts as a block start.
-const BLOCK_START = /^\s*($|[-*+]\s|\d+[.)]\s|#{1,6}\s|>|\||```|~~~|(-{3,}|={3,}|_{3,}|\*{3,})\s*$|\[\^)/;
+const BLOCK_START = /^\s*($|[-*+]\s|\d+[.)]\s|#{1,6}\s|>|\||```|~~~|!\[|(-{3,}|={3,}|_{3,}|\*{3,})\s*$|\[\^)/;
 
 // Below this a break was almost certainly deliberate -- a transcript stanza, an
 // address, a hand-typed list -- rather than a column wrap.
@@ -95,7 +102,9 @@ const els = {
   pinFirst: document.getElementById('pin-first'),
   sortNote: document.getElementById('sort-note'),
   themeToggle: document.getElementById('theme-toggle'),
-  printArea: document.getElementById('print-area')
+  printArea: document.getElementById('print-area'),
+  attachImage: document.getElementById('attach-image'),
+  imageInput: document.getElementById('image-input')
 };
 
 const SAVE_DELAY = 600;
@@ -229,6 +238,18 @@ function preview(note) {
   return note.excerpt || 'No additional text';
 }
 
+// Mirrors summarizeMedia() in media.js. The server collapses an image
+// reference to its alt text before it ships a list row, and a row patched in
+// locally has to do the same -- otherwise saving a note with a screenshot in it
+// replaces its own sidebar preview with 64 characters of content hash, and it
+// stays that way until the next full refresh.
+const MEDIA_IMAGE = /!\[([^\]]*)\]\(\/media\/[0-9a-f]{64}\.(?:png|jpg|gif|webp|avif)\)/g;
+const MEDIA_TAIL = /(?:!\[[^\]]*\]\()?\/media\/[0-9a-f]{8,}[^\s)]*$/;
+
+function summarizeMedia(text) {
+  return text.replace(MEDIA_IMAGE, (_match, alt) => `[${alt.trim() || 'image'}]`);
+}
+
 // A list row is a summary: every column except `body`, plus a short `excerpt`.
 // A note handed back by a write is the full thing, so reduce it to that shape
 // before it goes back into the list.
@@ -236,7 +257,13 @@ function toSummary(note) {
   const { body, ...rest } = note;
   return {
     ...rest,
-    excerpt: body.split('\n').slice(1).join(' ').replace(/\s+/g, ' ').trim().slice(0, 300)
+    excerpt: summarizeMedia(body.split('\n').slice(1).join(' '))
+      .replace(/\s+/g, ' ')
+      .trim()
+      .slice(0, 300)
+      // The slice can cut a reference in half and leave a run of raw hex at
+      // the end. Same trailing pass the server does, for the same reason.
+      .replace(MEDIA_TAIL, '[image]')
   };
 }
 
@@ -600,6 +627,166 @@ async function removeNote() {
   await refreshList();
 }
 
+// Images -----------------------------------------------------------------
+
+// Mirrors MAX_UPLOAD_BYTES in media.js. Checked here only so an obviously
+// oversized file fails instantly with a useful number instead of after a long
+// upload; the server enforces the real limit either way.
+const MAX_IMAGE_BYTES = 10 * 1024 * 1024;
+
+// Only has to be unique within this tab's lifetime -- a placeholder exists for
+// as long as one upload takes.
+let uploadSeq = 0;
+
+function humanBytes(n) {
+  if (n < 1024) return `${n} B`;
+  if (n < 1024 * 1024) return `${Math.round(n / 1024)} KB`;
+  return `${(n / (1024 * 1024)).toFixed(1)} MB`;
+}
+
+// Alt text worth having. A dropped or picked file brings its name; a pasted
+// screenshot usually arrives as "image.png" or with no name at all, in which
+// case there is nothing better to say than "image". Brackets and parens come
+// out because they would end the markdown early.
+function altFor(file) {
+  const base = String(file.name || '')
+    .replace(/\.[^.]+$/, '')
+    .replace(/[[\]()]/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+  return base && base.toLowerCase() !== 'image' ? base.slice(0, 80) : 'image';
+}
+
+// Splice text in at the caret and leave typing where it left off. In preview
+// mode the textarea is hidden and its selection means nothing -- a caret at 0
+// would drop the image above the title -- so it goes to the end instead.
+function insertAtCursor(text) {
+  const el = els.body;
+  if (previewing) {
+    const gap = el.value === '' || el.value.endsWith('\n') ? '' : '\n';
+    el.value += `${gap}${text}`;
+    paintPreview();
+  } else {
+    const start = el.selectionStart ?? el.value.length;
+    const end = el.selectionEnd ?? start;
+    el.value = el.value.slice(0, start) + text + el.value.slice(end);
+    const caret = start + text.length;
+    el.setSelectionRange(caret, caret);
+    el.focus();
+  }
+  scheduleSave();
+}
+
+// Swap a placeholder for the finished markdown (or for nothing, if the upload
+// failed) without disturbing anything typed since it went in. Found by index
+// rather than by String.replace precisely because the alt text can contain a
+// `$`, which a string-pattern replacement would read as a backreference.
+function replacePlaceholder(token, text) {
+  const el = els.body;
+  const at = el.value.indexOf(token);
+  if (at === -1) return false; // typed over, or the note was closed
+
+  const caret = el.selectionStart;
+  el.value = el.value.slice(0, at) + text + el.value.slice(at + token.length);
+
+  if (previewing) {
+    paintPreview();
+  } else {
+    // Only drag the caret along if the edit happened behind it.
+    const shift = text.length - token.length;
+    const next = caret > at ? Math.max(at, caret + shift) : caret;
+    el.setSelectionRange(next, next);
+  }
+  scheduleSave();
+  return true;
+}
+
+// POST the bytes straight through. Not via api(), which forces a JSON
+// Content-Type -- and `application/json` is the one header this endpoint cannot
+// accept, because the app-wide JSON parser would grab the body first.
+async function uploadImage(file) {
+  const res = await fetch('/api/media', {
+    method: 'POST',
+    headers: {
+      'Content-Type': file.type || 'application/octet-stream',
+      'X-Client-Id': CLIENT_ID
+    },
+    body: file
+  });
+  if (!res.ok) {
+    const detail = await res.json().catch(() => null);
+    throw new Error(detail?.error || `${res.status} ${res.statusText}`);
+  }
+  return res.json();
+}
+
+// Put every image in the drop into the open note. Placeholders all go in first,
+// in the order they arrived, so the finished images end up in that order no
+// matter which upload lands first -- and so a slow upload never has to hold the
+// caret still while you keep typing.
+async function attachImages(fileList) {
+  const files = [...(fileList ?? [])];
+  const images = files.filter((file) => file.type.startsWith('image/'));
+
+  if (images.length === 0) {
+    if (files.length > 0) setStatus('Only images can go into a note');
+    return;
+  }
+  if (currentId === null) {
+    setStatus('Open or create a note first');
+    return;
+  }
+
+  const queued = images.map((file) => ({
+    file,
+    token: `[uploading ${file.name || 'image'} (${humanBytes(file.size)})... #${++uploadSeq}]`
+  }));
+  insertAtCursor(`${queued.map((item) => item.token).join('\n')}\n`);
+
+  // One at a time. Three screenshots racing for the same textarea is the kind
+  // of bug that only shows up on someone else's machine.
+  let failure = null;
+  for (const { file, token } of queued) {
+    try {
+      if (file.size > MAX_IMAGE_BYTES) {
+        throw new Error(
+          `too large (${humanBytes(file.size)}; limit ${humanBytes(MAX_IMAGE_BYTES)})`
+        );
+      }
+      setStatus(`Uploading ${file.name || 'image'}...`);
+      const stored = await uploadImage(file);
+      replacePlaceholder(token, `![${altFor(file)}](${stored.url})`);
+    } catch (err) {
+      replacePlaceholder(token, '');
+      failure = err.message;
+      console.error(err);
+    }
+  }
+
+  // Commit now rather than on the debounce: an image is a deliberate act, and
+  // the body is the only record of which file the note points at.
+  await flush();
+  // flush() reports "Saved", which is true but buries the part that is not.
+  if (failure) setStatus(`Image failed -- ${failure}`);
+}
+
+// `types` rather than `items`: during a drag the browser withholds file
+// contents and, from some sources, the per-item MIME type as well -- but it
+// always says whether files are involved. The real filter happens on drop,
+// where the File objects are readable.
+function draggingFiles(event) {
+  return [...(event.dataTransfer?.types ?? [])].includes('Files');
+}
+
+// dragleave fires every time the pointer crosses into a child element, so the
+// highlight has to be reference-counted or it flickers off over the textarea.
+let dragDepth = 0;
+
+function endDrag() {
+  dragDepth = 0;
+  els.pane.classList.remove('drop-target');
+}
+
 // Live feed ---------------------------------------------------------------
 
 // Most notes arrive from outside this browser (a Claude session POSTing a
@@ -678,6 +865,55 @@ els.togglePreview.addEventListener('click', () => setPreview(!previewing));
 els.download.addEventListener('click', downloadCurrent);
 els.pdf.addEventListener('click', printCurrent);
 els.exportAll.addEventListener('click', exportAll);
+
+els.pane.addEventListener('dragenter', (event) => {
+  if (!draggingFiles(event)) return;
+  event.preventDefault();
+  dragDepth++;
+  els.pane.classList.add('drop-target');
+});
+
+els.pane.addEventListener('dragover', (event) => {
+  if (!draggingFiles(event)) return;
+  // Required. Without a preventDefault here the browser handles the drop
+  // itself and navigates the page to the dropped file.
+  event.preventDefault();
+  event.dataTransfer.dropEffect = 'copy';
+});
+
+els.pane.addEventListener('dragleave', () => {
+  if (--dragDepth <= 0) endDrag();
+});
+
+els.pane.addEventListener('drop', (event) => {
+  if (!draggingFiles(event)) return;
+  event.preventDefault();
+  endDrag();
+  attachImages(event.dataTransfer.files).catch((err) => console.error(err));
+});
+
+// A screenshot on the clipboard arrives as a file alongside (or instead of) any
+// text. Only take over the paste when there is actually an image in it --
+// otherwise this is an ordinary text paste and the browser does it better.
+els.body.addEventListener('paste', (event) => {
+  const images = [...(event.clipboardData?.files ?? [])].filter((file) =>
+    file.type.startsWith('image/')
+  );
+  if (images.length === 0) return;
+  event.preventDefault();
+  attachImages(images).catch((err) => console.error(err));
+});
+
+els.attachImage.addEventListener('click', () => els.imageInput.click());
+
+els.imageInput.addEventListener('change', () => {
+  const files = els.imageInput.files;
+  // Clear it first: picking the same file twice in a row fires no change event
+  // otherwise, which reads as a broken button.
+  const picked = [...files];
+  els.imageInput.value = '';
+  attachImages(picked).catch((err) => console.error(err));
+});
 
 // The initial theme is set by an inline script in <head> (before paint, to
 // avoid a flash). Here we only handle the toggle and persist the choice.

@@ -75,6 +75,10 @@
           <button id="toggle-preview" class="btn btn-outline-secondary" type="button">
             Preview
           </button>
+          <button id="attach-image" class="btn btn-outline-secondary" type="button"
+            title="Insert an image -- or just paste or drop one into the note">
+            Image
+          </button>
           <button id="download-note" class="btn btn-outline-secondary" type="button">
             Download
           </button>
@@ -92,6 +96,15 @@
         placeholder="Start typing. The first line becomes the title. Markdown works."
         spellcheck="true"></textarea>
       <div id="note-preview" class="note-preview d-none"></div>
+      <!-- The Image button's actual file dialog. Hidden because a styled
+           <input type=file> is a fight, and paste / drag-and-drop are the two
+           routes anyone actually uses. -->
+      <input
+        id="image-input"
+        type="file"
+        accept="image/png,image/jpeg,image/gif,image/webp,image/avif"
+        multiple
+        hidden>
     </div>
 
     <div id="editor-empty" class="editor-empty">
@@ -102,6 +115,9 @@
         <kbd>Ctrl</kbd> + <kbd>E</kbd> preview &middot;
         <kbd>Ctrl</kbd> + <kbd>P</kbd> PDF &middot;
         <kbd>Ctrl</kbd> + <kbd>&uarr;</kbd>/<kbd>&darr;</kbd> sort
+      </p>
+      <p class="text-secondary small mb-0 mt-2">
+        Paste or drop an image straight into a note.
       </p>
     </div>
   </main>

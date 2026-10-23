@@ -1,4 +1,5 @@
-import { Router } from 'express';
+import express, { Router } from 'express';
+import { readFileSync, statSync } from 'node:fs';
 import {
   DEFAULT_SORT,
   SORTS,
@@ -13,6 +14,15 @@ import {
 } from './db.js';
 import { bus, publish } from './events.js';
 import { makeZip } from './zip.js';
+import {
+  MAX_UPLOAD_BYTES,
+  listMedia,
+  mediaFile,
+  referencedIn,
+  removeMedia,
+  storeMedia,
+  toRelativeMedia
+} from './media.js';
 
 // RFC 5987: filenames with non-ASCII or quotes need the encoded form, so we
 // send a plain fallback plus filename* for anything modern.
@@ -110,23 +120,124 @@ router.get('/api/stream', (req, res) => {
   });
 });
 
-// Every note as a .md file, zipped. Defined before the :id routes so "export"
-// is never mistaken for a note id.
+// Every note as a .md file, zipped, with the images they reference travelling
+// alongside them in media/. Defined before the :id routes so "export" is never
+// mistaken for a note id.
 router.get('/api/export', (req, res) => {
   const { notes } = listNotes(req.query.q, listOptions(req));
   if (notes.length === 0) return res.status(404).json({ error: 'No notes to export' });
 
   const files = notes.map((note) => ({
     name: noteFilename(note),
-    data: note.body,
+    // The stored `/media/...` links only resolve while this app is running, so
+    // the exported copy gets relative ones instead. Without this the zip is a
+    // folder of markdown pointing at images it is shipping but cannot reach.
+    data: toRelativeMedia(note.body),
     // SQLite stores UTC without a zone marker; tag it so it parses as UTC.
     modified: new Date(`${note.updated_at.replace(' ', 'T')}Z`)
   }));
+
+  // One copy per image however many notes reference it -- the names are content
+  // hashes, so a Set is already the dedup. Images are read into memory here the
+  // same way bodies are; with a 10MB ceiling per file that is the export's
+  // existing shape rather than a new problem.
+  const referenced = new Set();
+  for (const note of notes) {
+    for (const name of referencedIn(note.body)) referenced.add(name);
+  }
+  for (const name of referenced) {
+    const path = mediaFile(name);
+    // A body can outlive its image -- swept, or deleted by hand. Skip it: the
+    // link in that note is already broken, and failing the whole export over it
+    // would be the worse answer.
+    if (!path) continue;
+    files.push({
+      name: `media/${name}`,
+      data: readFileSync(path),
+      modified: statSync(path).mtime
+    });
+  }
+
   const zip = makeZip(files);
 
   res.set('Content-Type', 'application/zip');
   res.set('Content-Disposition', contentDisposition('notes.zip'));
   res.send(zip);
+});
+
+// Media -------------------------------------------------------------------
+
+// The raw bytes of the upload, not a form. One field would be the only thing a
+// multipart body carried here, and parsing multipart means a dependency; this
+// way the browser POSTs the File straight through and an agent is one
+// `curl --data-binary @shot.png` away.
+//
+// `type: () => true` accepts any Content-Type on purpose. The format is decided
+// by sniffing the magic bytes -- the header is a hint from the caller and this
+// route does not trust it either way. The one header that does matter is NOT
+// sending `application/json`, which the app-wide JSON parser would grab first
+// and choke on.
+const imageBody = express.raw({ type: () => true, limit: MAX_UPLOAD_BYTES });
+
+router.post('/api/media', imageBody, (req, res) => {
+  if (!Buffer.isBuffer(req.body) || req.body.length === 0) {
+    return res.status(400).json({
+      error: 'Send the image bytes as the request body, with an image/* Content-Type'
+    });
+  }
+
+  const stored = storeMedia(req.body);
+  if (!stored) {
+    return res.status(415).json({
+      error: 'Not a supported image. png, jpg, gif, webp or avif (svg is refused deliberately).'
+    });
+  }
+
+  // Deliberately no `publish` -- an upload is not a note change, and the note
+  // it is about is saved a moment later by the editor, which does publish.
+  res.status(201).json(stored);
+});
+
+// Every stored image, and whether any note still points at it. The reason this
+// exists is that content-addressing makes dedup free and therefore makes
+// "which note owns this file" the wrong question -- several can share one, so
+// the only safe answer is counted across all of them at once.
+function withReferences() {
+  const referenced = new Set();
+  for (const note of listNotes(null, {}).notes) {
+    for (const name of referencedIn(note.body)) referenced.add(name);
+  }
+  return listMedia().map((file) => ({ ...file, referenced: referenced.has(file.name) }));
+}
+
+router.get('/api/media', (_req, res) => {
+  res.json(withReferences());
+});
+
+// An image uploaded a second ago and not yet typed into a body looks exactly
+// like an abandoned one. An hour is long enough that nothing in flight is ever
+// mistaken for rubbish.
+const SWEEP_GRACE_MS = 60 * 60 * 1000;
+
+// Delete the images no note references. A dry run unless the body says
+// `{"delete": true}`, because the whole risk here is a reference this process
+// cannot see -- an unsaved editor, a body being written by hand right now --
+// and a list you can read first is the cheap way to rule that out.
+router.post('/api/media/sweep', (req, res) => {
+  const cutoff = Date.now() - SWEEP_GRACE_MS;
+  const orphans = withReferences().filter(
+    (file) => !file.referenced && Date.parse(file.stored_at) < cutoff
+  );
+
+  const sweep = req.body?.delete === true;
+  const deleted = sweep ? orphans.filter((file) => removeMedia(file.name)) : [];
+
+  res.json({
+    swept: sweep,
+    orphans: orphans.map((file) => file.name),
+    bytes: orphans.reduce((total, file) => total + file.bytes, 0),
+    deleted: deleted.map((file) => file.name)
+  });
 });
 
 router.post('/api/notes', (req, res) => {
